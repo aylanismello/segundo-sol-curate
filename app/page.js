@@ -1,0 +1,558 @@
+'use client';
+
+/**
+ * Home Page Component
+ *
+ * The 'use client' directive at the top tells Next.js this is a CLIENT COMPONENT.
+ * This means it runs in the browser and can use hooks like useState, useEffect.
+ *
+ * Without 'use client', components are SERVER COMPONENTS (rendered on the server only).
+ * Think of it like:
+ * - Server Components = like Rails views (rendered server-side)
+ * - Client Components = like React SPA (rendered client-side, interactive)
+ *
+ * We need 'use client' here because we're using useState and handling form submissions.
+ */
+
+import { useState } from 'react';
+import TracklistDisplay from './components/TracklistDisplay';
+import { genreCategories, genreColors, getGenreApiId } from './data/genres';
+
+export default function Home() {
+  // React hooks for state management
+  // If you're used to React, this is familiar!
+  // In Rails, you'd handle this with form submissions and page reloads
+  // Search mode: 'track' or 'genre'
+  const [searchMode, setSearchMode] = useState('track');
+
+  // Track search state
+  const [artist, setArtist] = useState('');
+  const [title, setTitle] = useState('');
+
+  // Genre search state
+  const [genreSearchQuery, setGenreSearchQuery] = useState('');
+  const [genreBrowseMode, setGenreBrowseMode] = useState('search'); // 'search' or 'browse'
+  const [expandedCategory, setExpandedCategory] = useState(null);
+  const [selectedGenre, setSelectedGenre] = useState(null);
+
+  // Shared state
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [episodes, setEpisodes] = useState(null);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [selectedEpisode, setSelectedEpisode] = useState(null);
+  const [tracklist, setTracklist] = useState(null);
+  const [loadingTracklist, setLoadingTracklist] = useState(false);
+
+  // Pagination settings
+  const episodesPerPage = 9;
+  const currentEpisodes = episodes ? episodes.slice(currentPage * episodesPerPage, (currentPage + 1) * episodesPerPage) : [];
+  const totalPages = episodes ? Math.ceil(episodes.length / episodesPerPage) : 0;
+
+  /**
+   * Handle form submission
+   *
+   * Now this just searches for episodes and displays them.
+   * The tracklist fetching happens when you CLICK an episode!
+   */
+  const handleSubmit = async (e) => {
+    e.preventDefault(); // Prevent default form submission (no page reload!)
+
+    // Reset state
+    setLoading(true);
+    setError(null);
+    setEpisodes(null);
+    setCurrentPage(0);
+    setSelectedEpisode(null);
+    setTracklist(null);
+
+    try {
+      // Search NTS for the track - now returns 10 episodes!
+      const ntsResponse = await fetch(
+        `/api/nts?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`
+      );
+
+      if (!ntsResponse.ok) {
+        const errorData = await ntsResponse.json();
+        throw new Error(errorData.error || 'Failed to search NTS');
+      }
+
+      const ntsData = await ntsResponse.json();
+      setEpisodes(ntsData.episodes);
+
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /**
+   * Handle genre selection
+   *
+   * When you click a genre, fetch episodes for that genre!
+   * Can be called with either (categoryId, subgenre) or (genreApiId)
+   */
+  const handleGenreClick = async (categoryIdOrApiId, subgenre = null) => {
+    // If called with two args, it's from browse mode (category + subgenre)
+    // If called with one arg, it's from type-ahead mode (full API ID)
+    const genreApiId = subgenre
+      ? getGenreApiId(categoryIdOrApiId, subgenre.id)
+      : categoryIdOrApiId;
+
+    setSelectedGenre(subgenre || { name: genreApiId });
+    setLoading(true);
+    setError(null);
+    setEpisodes(null);
+    setCurrentPage(0);
+    setSelectedEpisode(null);
+    setTracklist(null);
+
+    try {
+      console.log(`Searching for genre: ${genreApiId}`);
+
+      // Search NTS for episodes by genre
+      const genreResponse = await fetch(
+        `/api/genre?id=${encodeURIComponent(genreApiId)}`
+      );
+
+      if (!genreResponse.ok) {
+        const errorData = await genreResponse.json();
+        throw new Error(errorData.error || 'Failed to search by genre');
+      }
+
+      const genreData = await genreResponse.json();
+      setEpisodes(genreData.episodes);
+
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Get all genres flattened for type-ahead search
+  const allGenres = genreCategories.flatMap(category =>
+    category.subgenres.map(subgenre => ({
+      categoryId: category.id,
+      categoryName: category.name,
+      subgenreId: subgenre.id,
+      subgenreName: subgenre.name,
+      fullApiId: getGenreApiId(category.id, subgenre.id),
+      displayName: `${subgenre.name} (${category.name})`,
+      color: category.color
+    }))
+  );
+
+  // Filter genres based on search query
+  const filteredGenres = genreSearchQuery.trim() === ''
+    ? []
+    : allGenres.filter(genre =>
+        genre.subgenreName.toLowerCase().includes(genreSearchQuery.toLowerCase()) ||
+        genre.categoryName.toLowerCase().includes(genreSearchQuery.toLowerCase())
+      ).slice(0, 10); // Show max 10 results
+
+  /**
+   * Handle episode click
+   *
+   * When you click an episode, THIS is when we fetch the tracklist!
+   * Only fetch once per episode (saves API calls and is faster).
+   */
+  const handleEpisodeClick = async (episode) => {
+    setSelectedEpisode(episode);
+    setLoadingTracklist(true);
+    setError(null);
+
+    try {
+      // Fetch the tracklist with Spotify links for THIS specific episode
+      const tracklistResponse = await fetch(
+        `/api/tracklist?path=${encodeURIComponent(episode.episodePath)}`
+      );
+
+      if (!tracklistResponse.ok) {
+        const errorData = await tracklistResponse.json();
+        throw new Error(errorData.error || 'Failed to fetch tracklist');
+      }
+
+      const tracklistData = await tracklistResponse.json();
+      setTracklist(tracklistData);
+
+    } catch (err) {
+      console.error('Error:', err);
+      setError(err.message);
+    } finally {
+      setLoadingTracklist(false);
+    }
+  };
+
+  return (
+    <main className="min-h-screen bg-black text-white p-8">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <header className="mb-8">
+          <h1 className="text-4xl font-bold mb-2">NTS Curator</h1>
+          <p className="text-gray-400">
+            Discover NTS episodes and tracklists with Spotify links
+          </p>
+        </header>
+
+        {/* Search Mode Toggle */}
+        <div className="mb-8 flex gap-2">
+          <button
+            onClick={() => {
+              setSearchMode('track');
+              setEpisodes(null);
+              setSelectedGenre(null);
+              setSelectedEpisode(null);
+              setTracklist(null);
+            }}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+              searchMode === 'track'
+                ? 'bg-white text-black'
+                : 'bg-zinc-900 text-white border border-zinc-800 hover:border-zinc-600'
+            }`}
+          >
+            Search by Track
+          </button>
+          <button
+            onClick={() => {
+              setSearchMode('genre');
+              setEpisodes(null);
+              setSelectedEpisode(null);
+              setTracklist(null);
+            }}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+              searchMode === 'genre'
+                ? 'bg-white text-black'
+                : 'bg-zinc-900 text-white border border-zinc-800 hover:border-zinc-600'
+            }`}
+          >
+            Browse by Genre
+          </button>
+        </div>
+
+        {/* Track Search Form */}
+        {searchMode === 'track' && (
+          <form onSubmit={handleSubmit} className="mb-12">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-1">
+                <input
+                  type="text"
+                  id="artist"
+                  value={artist}
+                  onChange={(e) => setArtist(e.target.value)}
+                  placeholder="Artist"
+                  required
+                  className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
+                />
+              </div>
+              <div className="text-2xl font-bold text-gray-600">—</div>
+              <div className="flex-1">
+                <input
+                  type="text"
+                  id="title"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Track"
+                  required
+                  className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
+                />
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 px-6 bg-white text-black font-semibold rounded-lg hover:bg-gray-200 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+            >
+              {loading ? 'Searching...' : 'Find Episode'}
+            </button>
+          </form>
+        )}
+
+        {/* Genre Search/Browse */}
+        {searchMode === 'genre' && (
+          <div className="mb-12">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-semibold">
+                {genreBrowseMode === 'search' ? 'Search Genres' : 'Browse by Genre'}
+              </h2>
+              <button
+                onClick={() => {
+                  setGenreBrowseMode(genreBrowseMode === 'search' ? 'browse' : 'search');
+                  setGenreSearchQuery('');
+                  setExpandedCategory(null);
+                }}
+                className="text-sm text-gray-400 hover:text-white transition-colors"
+              >
+                {genreBrowseMode === 'search' ? 'Browse categories instead' : 'Search instead'}
+              </button>
+            </div>
+
+            {/* Type-ahead search mode */}
+            {genreBrowseMode === 'search' && (
+              <div className="relative">
+                <input
+                  type="text"
+                  value={genreSearchQuery}
+                  onChange={(e) => setGenreSearchQuery(e.target.value)}
+                  placeholder="Type a genre name (e.g., Bossa Nova, Techno, Jazz...)"
+                  className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
+                />
+                {filteredGenres.length > 0 && (
+                  <div className="absolute z-10 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg max-h-80 overflow-y-auto">
+                    {filteredGenres.map((genre, index) => {
+                      const colorClass = genreColors[genre.color] || genreColors.other;
+                      return (
+                        <button
+                          key={index}
+                          onClick={() => {
+                            handleGenreClick(genre.fullApiId);
+                            setGenreSearchQuery('');
+                          }}
+                          disabled={loading}
+                          className={`w-full text-left px-4 py-3 hover:bg-zinc-800 transition-colors border-b border-zinc-800 last:border-b-0 disabled:cursor-not-allowed`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-semibold">{genre.subgenreName}</div>
+                              <div className="text-sm text-gray-500">{genre.categoryName}</div>
+                            </div>
+                            <div className={`px-3 py-1 rounded-full text-xs ${colorClass}`}>
+                              {genre.categoryName}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Browse mode - category chips */}
+            {genreBrowseMode === 'browse' && (
+              <>
+                {/* Top-level categories */}
+                <div className="flex flex-wrap gap-2 mb-4">
+              {genreCategories.map((category) => {
+                const isExpanded = expandedCategory?.id === category.id;
+                const colorClass = genreColors[category.color] || genreColors.other;
+
+                return (
+                  <button
+                    key={category.id}
+                    onClick={() => setExpandedCategory(isExpanded ? null : category)}
+                    className={`
+                      px-4 py-2 rounded-full font-semibold text-sm transition-all
+                      whitespace-nowrap border
+                      ${isExpanded
+                        ? 'bg-white text-black shadow-lg ring-2 ring-white'
+                        : colorClass
+                      }
+                    `}
+                  >
+                    {category.name}
+                    <span className="ml-2">{isExpanded ? '−' : '+'}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Sub-genres (shown when category is expanded) */}
+            {expandedCategory && (
+              <div className="p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
+                <div className="flex flex-wrap gap-2">
+                  {expandedCategory.subgenres.map((subgenre) => {
+                    const isSelected = selectedGenre?.id === subgenre.id;
+                    const colorClass = genreColors[expandedCategory.color] || genreColors.other;
+
+                    return (
+                      <button
+                        key={subgenre.id}
+                        onClick={() => handleGenreClick(expandedCategory.id, subgenre)}
+                        disabled={loading}
+                        className={`
+                          px-3 py-1.5 rounded-full font-medium text-xs transition-all
+                          disabled:cursor-not-allowed whitespace-nowrap border
+                          ${isSelected
+                            ? 'bg-white text-black shadow-lg'
+                            : colorClass
+                          }
+                        `}
+                      >
+                        {subgenre.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Error Display */}
+        {error && (
+          <div className="mb-8 p-4 bg-red-900/20 border border-red-900 rounded-lg">
+            <p className="text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Episodes Grid */}
+        {episodes && (
+          <div className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">
+                Found {episodes.length} episode{episodes.length !== 1 ? 's' : ''}
+              </h2>
+              {totalPages > 1 && (
+                <div className="text-sm text-gray-400">
+                  Page {currentPage + 1} of {totalPages}
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+              {currentEpisodes.map((episode, index) => (
+                <div
+                  key={index}
+                  className={`p-4 border rounded-lg transition-all relative ${
+                    selectedEpisode === episode
+                      ? 'bg-white text-black border-white shadow-lg'
+                      : 'bg-zinc-900 border-zinc-800'
+                  }`}
+                >
+                  <div className={`text-xs font-mono mb-2 ${
+                    selectedEpisode === episode ? 'text-gray-600' : 'text-gray-500'
+                  }`}>
+                    Aired: {episode.airDate}
+                  </div>
+                  <a
+                    href={`https://www.nts.live${episode.episodePath}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`font-semibold text-sm mb-3 line-clamp-2 block hover:underline ${
+                      selectedEpisode === episode ? 'text-black' : 'text-white'
+                    }`}
+                  >
+                    {episode.episodeTitle}
+                  </a>
+                  <div className="flex items-start justify-between gap-2">
+                    {episode.track && (
+                      <div className={`text-xs flex-1 ${
+                        selectedEpisode === episode ? 'text-gray-700' : 'text-gray-400'
+                      }`}>
+                        <p className="line-clamp-1">
+                          <span className="font-medium">Track:</span> {episode.track.title} - {episode.track.artist}
+                        </p>
+                      </div>
+                    )}
+                    {episode.genres && episode.genres.length > 0 && (
+                      <div className={`text-xs flex-1 ${
+                        selectedEpisode === episode ? 'text-gray-700' : 'text-gray-400'
+                      }`}>
+                        <p className="line-clamp-1">
+                          <span className="font-medium">Genres:</span> {episode.genres.slice(0, 3).map(g => g.name).join(', ')}
+                        </p>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleEpisodeClick(episode)}
+                      className={`flex-shrink-0 p-1.5 rounded hover:bg-opacity-20 transition-colors ${
+                        selectedEpisode === episode
+                          ? 'hover:bg-black'
+                          : 'hover:bg-white'
+                      }`}
+                      title="Load tracklist"
+                    >
+                      <svg
+                        className={`w-5 h-5 ${
+                          selectedEpisode === episode ? 'text-black' : 'text-white'
+                        }`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-4">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(0, prev - 1))}
+                  disabled={currentPage === 0}
+                  className="p-2 rounded-lg border border-zinc-800 hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Previous page"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+
+                <div className="text-sm text-gray-400">
+                  {currentPage + 1} / {totalPages}
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages - 1, prev + 1))}
+                  disabled={currentPage === totalPages - 1}
+                  className="p-2 rounded-lg border border-zinc-800 hover:border-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Next page"
+                >
+                  <svg
+                    className="w-6 h-6"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Loading Tracklist */}
+        {loadingTracklist && (
+          <div className="mb-8 p-6 bg-zinc-900 border border-zinc-800 rounded-lg">
+            <p className="text-gray-400">Loading tracklist...</p>
+          </div>
+        )}
+
+        {/* Tracklist Display */}
+        {tracklist && !loadingTracklist && (
+          <TracklistDisplay tracklist={tracklist} />
+        )}
+      </div>
+    </main>
+  );
+}
