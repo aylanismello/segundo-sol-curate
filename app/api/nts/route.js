@@ -21,8 +21,8 @@ export async function GET(request) {
   const artist = searchParams.get('artist');
   const title = searchParams.get('title');
 
-  // Validate input - always good to check!
-  if (!artist || !title) {
+  // Validate input - require at least one field
+  if (!artist && !title) {
     return NextResponse.json(
       { error: 'Missing artist or title parameter' },
       { status: 400 }
@@ -30,9 +30,10 @@ export async function GET(request) {
   }
 
   try {
-    // Build the search query by combining title + artist
+    // Build the search query by combining title + artist (if both provided)
     // We encode it for the URL (handles spaces and special chars)
-    const query = encodeURIComponent(`${title} ${artist}`);
+    const queryParts = [title, artist].filter(Boolean);
+    const query = encodeURIComponent(queryParts.join(' '));
 
     // NTS API endpoint - publicly accessible, no auth needed!
     const ntsUrl = `https://www.nts.live/api/v2/search?q=${query}&version=2&offset=0&limit=60&types[]=track`;
@@ -73,6 +74,8 @@ export async function GET(request) {
       episodePath: episode.article.path,
       episodeTitle: episode.article.title,
       airDate: episode.local_date,
+      location: episode.location || null,
+      genres: episode.genres || [],
       track: {
         title: episode.title,
         artist: episode.artists[0]?.name || 'Unknown'

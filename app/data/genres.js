@@ -237,7 +237,7 @@ export const genreCategories = [
     ]
   },
   {
-    id: 'classical',
+    id: 'classicalopera',
     name: 'Classical / Opera',
     color: 'classical',
     subgenres: [
@@ -246,7 +246,7 @@ export const genreCategories = [
       { id: 'choralmusic', name: 'Choral Music' },
       { id: 'classical', name: 'Classical' },
       { id: 'minimalism', name: 'Minimalism' },
-      { id: 'modernclassical', name: 'Modern Classical' },
+      { id: 'modern-classical', name: 'Modern Classical' },
       { id: 'opera', name: 'Opera' },
     ]
   },
@@ -337,7 +337,7 @@ export const genreCategories = [
     name: 'Jazz',
     color: 'jazz',
     subgenres: [
-      { id: 'afrocubanjazz', name: 'Afro Cuban Jazz' },
+      { id: 'afro-cuban-jazz', name: 'Afro Cuban Jazz' },
       { id: 'ambientjazz', name: 'Ambient Jazz' },
       { id: 'bebop', name: 'Bebop' },
       { id: 'contemporaryjazz', name: 'Contemporary Jazz' },

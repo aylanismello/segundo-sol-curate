@@ -14,16 +14,20 @@
  * We need 'use client' here because we're using useState and handling form submissions.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import TracklistDisplay from './components/TracklistDisplay';
 import { genreCategories, genreColors, getGenreApiId } from './data/genres';
+import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks } from './utils/localStorage';
 
 export default function Home() {
   // React hooks for state management
   // If you're used to React, this is familiar!
   // In Rails, you'd handle this with form submissions and page reloads
-  // Search mode: 'track' or 'genre'
+  // Search mode: 'track', 'genre', 'liked', or 'likedTracks'
   const [searchMode, setSearchMode] = useState('track');
+  const [likedEpisodes, setLikedEpisodes] = useState([]);
+  const [likedTracks, setLikedTracksState] = useState([]);
+  const [likedStates, setLikedStates] = useState({});
 
   // Track search state
   const [artist, setArtist] = useState('');
@@ -49,6 +53,32 @@ export default function Home() {
   const currentEpisodes = episodes ? episodes.slice(currentPage * episodesPerPage, (currentPage + 1) * episodesPerPage) : [];
   const totalPages = episodes ? Math.ceil(episodes.length / episodesPerPage) : 0;
 
+  // Load liked episodes and tracks on mount
+  useEffect(() => {
+    setLikedEpisodes(getLikedEpisodes());
+    setLikedTracksState(getLikedTracks());
+  }, []);
+
+  // Toggle like status
+  const toggleLike = (episode) => {
+    if (isEpisodeLiked(episode.episodePath)) {
+      unlikeEpisode(episode.episodePath);
+      setLikedStates(prev => ({ ...prev, [episode.episodePath]: false }));
+      setLikedEpisodes(getLikedEpisodes());
+    } else {
+      likeEpisode(episode);
+      setLikedStates(prev => ({ ...prev, [episode.episodePath]: true }));
+      setLikedEpisodes(getLikedEpisodes());
+    }
+  };
+
+  const isLiked = (episodePath) => {
+    if (episodePath in likedStates) {
+      return likedStates[episodePath];
+    }
+    return isEpisodeLiked(episodePath);
+  };
+
   /**
    * Handle form submission
    *
@@ -57,6 +87,12 @@ export default function Home() {
    */
   const handleSubmit = async (e) => {
     e.preventDefault(); // Prevent default form submission (no page reload!)
+
+    // Require at least one field to be filled
+    if (!artist.trim() && !title.trim()) {
+      setError('Please enter either an artist or track name');
+      return;
+    }
 
     // Reset state
     setLoading(true);
@@ -165,6 +201,9 @@ export default function Home() {
     setLoadingTracklist(true);
     setError(null);
 
+    // Mark this tracklist as viewed
+    markTracklistViewed(episode.episodePath);
+
     try {
       // Fetch the tracklist with Spotify links for THIS specific episode
       const tracklistResponse = await fetch(
@@ -192,10 +231,25 @@ export default function Home() {
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <header className="mb-8">
-          <h1 className="text-4xl font-bold mb-2">NTS Curator</h1>
-          <p className="text-gray-400">
-            Discover NTS episodes and tracklists with Spotify links
-          </p>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-4xl font-bold mb-2">NTS Curator</h1>
+              <p className="text-gray-400">
+                Discover NTS episodes and tracklists with Spotify links
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                if (confirm('Clear all viewing history?')) {
+                  clearAllTracking();
+                  window.location.reload();
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-white transition-colors px-3 py-1 border border-gray-700 rounded hover:border-gray-500"
+            >
+              Clear History
+            </button>
+          </div>
         </header>
 
         {/* Search Mode Toggle */}
@@ -231,6 +285,36 @@ export default function Home() {
           >
             Browse by Genre
           </button>
+          <button
+            onClick={() => {
+              setSearchMode('liked');
+              setEpisodes(null);
+              setSelectedEpisode(null);
+              setTracklist(null);
+            }}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+              searchMode === 'liked'
+                ? 'bg-white text-black'
+                : 'bg-zinc-900 text-white border border-zinc-800 hover:border-zinc-600'
+            }`}
+          >
+            Liked Episodes {likedEpisodes.length > 0 && `(${likedEpisodes.length})`}
+          </button>
+          <button
+            onClick={() => {
+              setSearchMode('likedTracks');
+              setEpisodes(null);
+              setSelectedEpisode(null);
+              setTracklist(null);
+            }}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+              searchMode === 'likedTracks'
+                ? 'bg-white text-black'
+                : 'bg-zinc-900 text-white border border-zinc-800 hover:border-zinc-600'
+            }`}
+          >
+            Liked Tracks {likedTracks.length > 0 && `(${likedTracks.length})`}
+          </button>
         </div>
 
         {/* Track Search Form */}
@@ -244,7 +328,6 @@ export default function Home() {
                   value={artist}
                   onChange={(e) => setArtist(e.target.value)}
                   placeholder="Artist"
-                  required
                   className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
                 />
               </div>
@@ -256,7 +339,6 @@ export default function Home() {
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Track"
-                  required
                   className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
                 />
               </div>
@@ -298,8 +380,29 @@ export default function Home() {
                   value={genreSearchQuery}
                   onChange={(e) => setGenreSearchQuery(e.target.value)}
                   placeholder="Type a genre name (e.g., Bossa Nova, Techno, Jazz...)"
-                  className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
+                  className="w-full px-4 py-3 pr-10 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
                 />
+                {genreSearchQuery && (
+                  <button
+                    onClick={() => setGenreSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors"
+                    aria-label="Clear search"
+                  >
+                    <svg
+                      className="w-5 h-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+                )}
                 {filteredGenres.length > 0 && (
                   <div className="absolute z-10 w-full mt-2 bg-zinc-900 border border-zinc-800 rounded-lg shadow-lg max-h-80 overflow-y-auto">
                     {filteredGenres.map((genre, index) => {
@@ -394,6 +497,151 @@ export default function Home() {
           </div>
         )}
 
+        {/* Liked Episodes View */}
+        {searchMode === 'liked' && (
+          <div className="mb-12">
+            {likedEpisodes.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-xl mb-2">No liked episodes yet</p>
+                <p className="text-sm">Click the heart icon on episodes to save them here</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {likedEpisodes.map((episode, index) => {
+                  const liked = isLiked(episode.episodePath);
+                  return (
+                    <div
+                      key={index}
+                      className="p-4 border rounded-lg transition-all relative bg-zinc-900 border-zinc-800"
+                    >
+                      <div className="text-xs font-mono mb-2 text-gray-500">
+                        Aired: {episode.airDate}
+                      </div>
+                      <a
+                        href={`https://www.nts.live${episode.episodePath}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-sm mb-3 line-clamp-2 block hover:underline text-white"
+                      >
+                        {episode.episodeTitle}
+                      </a>
+                      <div className="flex items-start justify-between gap-2">
+                        {episode.track && (
+                          <div className="text-xs flex-1 text-gray-400">
+                            <p className="line-clamp-1">
+                              <span className="font-medium">Track:</span> {episode.track.title} - {episode.track.artist}
+                            </p>
+                          </div>
+                        )}
+                        {episode.genres && episode.genres.length > 0 && (
+                          <div className="text-xs flex-1 text-gray-400">
+                            <p className="line-clamp-1">
+                              <span className="font-medium">Genres:</span> {episode.genres.slice(0, 3).map(g => g.name).join(', ')}
+                            </p>
+                          </div>
+                        )}
+                        <button
+                          onClick={() => handleEpisodeClick(episode)}
+                          className="flex-shrink-0 p-1.5 rounded hover:bg-white hover:bg-opacity-20 transition-colors"
+                          title="Load tracklist"
+                        >
+                          <svg
+                            className="w-5 h-5 text-white"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                            />
+                          </svg>
+                        </button>
+                      </div>
+                      {/* Like button */}
+                      <button
+                        onClick={() => toggleLike(episode)}
+                        className="absolute top-2 right-2 p-1.5 rounded-full hover:bg-white/10 transition-colors"
+                        title={liked ? 'Unlike' : 'Like'}
+                      >
+                        <svg
+                          className={`w-5 h-5 ${liked ? 'fill-red-500 text-red-500' : 'text-gray-400'}`}
+                          fill={liked ? 'currentColor' : 'none'}
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Liked Tracks View */}
+        {searchMode === 'likedTracks' && (
+          <div className="mb-12">
+            {likedTracks.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-xl mb-2">No liked tracks yet</p>
+                <p className="text-sm">Click the heart icon on tracks to save them here</p>
+              </div>
+            ) : (
+              <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+                <div className="p-6 border-b border-zinc-800">
+                  <h2 className="text-2xl font-bold">Liked Tracks</h2>
+                  <p className="text-gray-400 text-sm mt-1">
+                    {likedTracks.length} track{likedTracks.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div className="divide-y divide-zinc-800">
+                  {likedTracks.map((track, index) => (
+                    <div
+                      key={index}
+                      className="p-4 flex items-center gap-4 hover:bg-zinc-800/50 transition-colors"
+                    >
+                      <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
+                        {index + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold truncate">{track.title}</h3>
+                        <p className="text-gray-400 text-sm truncate">{track.artist}</p>
+                      </div>
+                      {track.spotify && (
+                        <a
+                          href={track.spotify.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-shrink-0 p-2 hover:bg-white/10 rounded-full transition-colors"
+                          title="Open in Spotify"
+                        >
+                          <svg
+                            className="w-5 h-5 text-green-500"
+                            fill="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                          </svg>
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Error Display */}
         {error && (
           <div className="mb-8 p-4 bg-red-900/20 border border-red-900 rounded-lg">
@@ -402,7 +650,7 @@ export default function Home() {
         )}
 
         {/* Episodes Grid */}
-        {episodes && (
+        {episodes && searchMode !== 'liked' && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-2xl font-bold">
@@ -415,12 +663,17 @@ export default function Home() {
               )}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-              {currentEpisodes.map((episode, index) => (
+              {currentEpisodes.map((episode, index) => {
+                const isViewed = isTracklistViewed(episode.episodePath);
+                const liked = isLiked(episode.episodePath);
+                return (
                 <div
                   key={index}
                   className={`p-4 border rounded-lg transition-all relative ${
                     selectedEpisode === episode
                       ? 'bg-white text-black border-white shadow-lg'
+                      : isViewed
+                      ? 'bg-zinc-900 border-zinc-800 opacity-60'
                       : 'bg-zinc-900 border-zinc-800'
                   }`}
                 >
@@ -428,36 +681,56 @@ export default function Home() {
                     selectedEpisode === episode ? 'text-gray-600' : 'text-gray-500'
                   }`}>
                     Aired: {episode.airDate}
+                    {episode.location && ` · ${episode.location}`}
                   </div>
                   <a
                     href={`https://www.nts.live${episode.episodePath}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`font-semibold text-sm mb-3 line-clamp-2 block hover:underline ${
+                    className={`font-semibold text-sm mb-2 line-clamp-2 block hover:underline ${
                       selectedEpisode === episode ? 'text-black' : 'text-white'
                     }`}
                   >
                     {episode.episodeTitle}
                   </a>
-                  <div className="flex items-start justify-between gap-2">
-                    {episode.track && (
-                      <div className={`text-xs flex-1 ${
-                        selectedEpisode === episode ? 'text-gray-700' : 'text-gray-400'
-                      }`}>
-                        <p className="line-clamp-1">
-                          <span className="font-medium">Track:</span> {episode.track.title} - {episode.track.artist}
-                        </p>
-                      </div>
-                    )}
-                    {episode.genres && episode.genres.length > 0 && (
-                      <div className={`text-xs flex-1 ${
-                        selectedEpisode === episode ? 'text-gray-700' : 'text-gray-400'
-                      }`}>
-                        <p className="line-clamp-1">
-                          <span className="font-medium">Genres:</span> {episode.genres.slice(0, 3).map(g => g.name).join(', ')}
-                        </p>
-                      </div>
-                    )}
+
+                  {/* Genres as clickable pills */}
+                  {episode.genres && episode.genres.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {episode.genres.slice(0, 3).map((genre, idx) => (
+                        <button
+                          key={idx}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSearchMode('genre');
+                            handleGenreClick(genre.id);
+                            setSelectedEpisode(null);
+                            setTracklist(null);
+                          }}
+                          className={`text-xs px-2 py-0.5 rounded-full transition-colors ${
+                            selectedEpisode === episode
+                              ? 'bg-gray-200 text-black hover:bg-gray-300'
+                              : 'bg-zinc-800 text-gray-300 hover:bg-zinc-700'
+                          }`}
+                          title="Browse this genre"
+                        >
+                          {genre.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {episode.track && (
+                    <div className={`text-xs mb-2 ${
+                      selectedEpisode === episode ? 'text-gray-700' : 'text-gray-400'
+                    }`}>
+                      <p className="line-clamp-1">
+                        <span className="font-medium">Track:</span> {episode.track.title} - {episode.track.artist}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2">
                     <button
                       onClick={() => handleEpisodeClick(episode)}
                       className={`flex-shrink-0 p-1.5 rounded hover:bg-opacity-20 transition-colors ${
@@ -484,8 +757,34 @@ export default function Home() {
                       </svg>
                     </button>
                   </div>
+                  {isViewed && (
+                    <div className="absolute top-2 right-10 bg-green-600 text-white text-xs px-2 py-1 rounded-full">
+                      ✓
+                    </div>
+                  )}
+                  {/* Like button */}
+                  <button
+                    onClick={() => toggleLike(episode)}
+                    className="absolute top-2 right-2 p-1.5 rounded-full hover:bg-white/10 transition-colors"
+                    title={liked ? 'Unlike' : 'Like'}
+                  >
+                    <svg
+                      className={`w-5 h-5 ${liked ? 'fill-red-500 text-red-500' : selectedEpisode === episode ? 'text-gray-600' : 'text-gray-400'}`}
+                      fill={liked ? 'currentColor' : 'none'}
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                      />
+                    </svg>
+                  </button>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Pagination Controls */}
@@ -549,8 +848,8 @@ export default function Home() {
         )}
 
         {/* Tracklist Display */}
-        {tracklist && !loadingTracklist && (
-          <TracklistDisplay tracklist={tracklist} />
+        {tracklist && !loadingTracklist && selectedEpisode && (
+          <TracklistDisplay tracklist={tracklist} episodePath={selectedEpisode.episodePath} />
         )}
       </div>
     </main>
