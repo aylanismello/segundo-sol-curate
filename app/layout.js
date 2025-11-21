@@ -13,8 +13,8 @@ import './globals.css';
  */
 
 export const metadata = {
-  title: 'NTS Curator',
-  description: 'Find NTS episodes and their Spotify playlists',
+  title: 'Segundo Sol Stacks',
+  description: 'Your DJ pool - curated music from NTS, SoundCloud, Bandcamp, and more',
 };
 
 export default function RootLayout({ children }) {

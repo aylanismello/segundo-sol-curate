@@ -68,14 +68,9 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
             className={`hover:bg-zinc-800/50 transition-colors ${
               played ? 'opacity-50' : ''
             }`}
-            onClick={() => {
-              if (!played && track.spotify) {
-                handleSpotifyClick(index);
-              }
-            }}
           >
             {/* Track Info Row */}
-            <div className="p-4 flex items-center gap-4 cursor-pointer">
+            <div className="p-4 flex items-center gap-4">
               <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
                 {index + 1}
               </div>
@@ -111,16 +106,12 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
                     </svg>
                   </button>
                 )}
-                {/* Manual "Mark as Played" button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSpotifyClick(index);
-                  }}
-                  className={`flex-shrink-0 p-1.5 rounded-full hover:bg-white/10 transition-colors ${
+                {/* Status indicator - shows if track has been played */}
+                <div
+                  className={`flex-shrink-0 p-1.5 rounded-full ${
                     played ? 'text-green-500' : 'text-gray-500'
                   }`}
-                  title={played ? 'Played' : 'Mark as played'}
+                  title={played ? 'Played' : 'Not played'}
                 >
                   <svg
                     className="w-5 h-5"
@@ -135,7 +126,7 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
                       d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                     />
                   </svg>
-                </button>
+                </div>
                 {track.spotify ? (
                   <a
                     href={track.spotify.url}
@@ -163,7 +154,11 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
             {/* Spotify Embed - Hidden by default, can be toggled */}
             {track.spotify && (
               <div className="px-4 pb-4">
-                <SpotifyEmbed trackId={track.spotify.id} />
+                <SpotifyEmbed
+                  trackId={track.spotify.id}
+                  played={played}
+                  onInteraction={() => handleSpotifyClick(index)}
+                />
               </div>
             )}
           </div>

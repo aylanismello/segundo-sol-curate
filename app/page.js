@@ -23,6 +23,8 @@ export default function Home() {
   // React hooks for state management
   // If you're used to React, this is familiar!
   // In Rails, you'd handle this with form submissions and page reloads
+  // Stack source: currently only 'nts', but will support 'soundcloud', 'bandcamp', etc.
+  const [stackSource, setStackSource] = useState('nts');
   // Search mode: 'track', 'genre', 'liked', or 'likedTracks'
   const [searchMode, setSearchMode] = useState('track');
   const [likedEpisodes, setLikedEpisodes] = useState([]);
@@ -233,9 +235,9 @@ export default function Home() {
         <header className="mb-8">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-4xl font-bold mb-2">NTS Curator</h1>
+              <h1 className="text-4xl font-bold mb-2">Segundo Sol Stacks</h1>
               <p className="text-gray-400">
-                Discover NTS episodes and tracklists with Spotify links
+                Your DJ pool - curated music stacks from multiple sources
               </p>
             </div>
             <button
@@ -249,6 +251,44 @@ export default function Home() {
             >
               Clear History
             </button>
+          </div>
+
+          {/* Stack Source Selector */}
+          <div className="mt-6 p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-semibold text-gray-400">Stack Source</label>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setStackSource('nts')}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 transition-all ${
+                  stackSource === 'nts'
+                    ? 'bg-white text-black border-white'
+                    : 'bg-zinc-800 text-white border-zinc-700 hover:border-zinc-600'
+                }`}
+              >
+                <svg className="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 26" fill="currentColor">
+                  <path d="M22.7 6.9L22.3 9h-1.5l.5-2c.1-.6.1-1.1-.6-1.1s-1 .5-1.1 1.1l-.4 1.7c-.1.5-.1 1 0 1.5l1.4 4.1c.2.6.3 1.3.1 2l-.6 2.6c-.4 1.5-1.5 2.4-2.9 2.4-1.6 0-2.3-.7-1.9-2.4l.5-2.2h1.5l-.5 2.1c-.2.8 0 1.2.7 1.2.6 0 1-.5 1.2-1.2l.5-2.3c.1-.5.1-1.1-.1-1.6l-1.3-3.8c-.2-.7-.3-1.2-.2-2.1l.4-2c.4-1.6 1.4-2.4 2.9-2.4 1.7 0 2.2.8 1.8 2.3zM11.2 21.1L14.6 6H13l.3-1.3h4.8L17.8 6h-1.7l-3.4 15.1h-1.5zm-4.5 0L8.1 6.6 4.8 21.1H3.5L7.2 4.8h2.2L8 18.7l3.2-14h1.3L8.8 21.1H6.7zM0 26h26V0H0v26z"></path>
+                </svg>
+                <span className="font-semibold">NTS Radio</span>
+              </button>
+              <button
+                disabled
+                className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 bg-zinc-800 text-gray-600 border-zinc-700 cursor-not-allowed opacity-50"
+                title="Coming soon"
+              >
+                <span className="font-semibold">SoundCloud</span>
+                <span className="text-xs bg-zinc-700 px-2 py-1 rounded">Soon</span>
+              </button>
+              <button
+                disabled
+                className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 bg-zinc-800 text-gray-600 border-zinc-700 cursor-not-allowed opacity-50"
+                title="Coming soon"
+              >
+                <span className="font-semibold">Bandcamp</span>
+                <span className="text-xs bg-zinc-700 px-2 py-1 rounded">Soon</span>
+              </button>
+            </div>
           </div>
         </header>
 
