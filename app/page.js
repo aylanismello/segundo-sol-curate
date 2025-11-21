@@ -14,10 +14,112 @@
  * We need 'use client' here because we're using useState and handling form submissions.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import TracklistDisplay from './components/TracklistDisplay';
+import HomeTab from './components/HomeTab';
 import { genreCategories, genreColors, getGenreApiId } from './data/genres';
-import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks } from './utils/localStorage';
+import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks, likeTrack, unlikeTrack, isTrackLiked, markTrackPlayed, isTrackPlayed } from './utils/localStorage';
+import {
+  getSeenEpisodes,
+  getReferencedTracks,
+  saveStackToHistory,
+  getStackHistory,
+  getTasteProfileStats,
+  clearAllTasteProfileData,
+  markEpisodeAsSeen,
+  markTracksAsReferenced,
+  deleteStack
+} from './utils/tasteProfileStorage';
+
+// Helper to get genre name from ID
+function getGenreNameFromId(genreId) {
+  for (const category of genreCategories) {
+    for (const subgenre of category.subgenres) {
+      const fullId = getGenreApiId(category.id, subgenre.id);
+      if (fullId === genreId) {
+        return subgenre.name;
+      }
+    }
+  }
+  return genreId;
+}
+
+// Lazy-loaded Spotify embed component with play tracking
+function LazySpotifyEmbed({ spotifyId, onInteraction, played }) {
+  const [isVisible, setIsVisible] = useState(false);
+  const containerRef = useRef(null);
+  const iframeRef = useRef(null);
+  const hasInteracted = useRef(played);
+  const checkingFocus = useRef(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.disconnect();
+          }
+        });
+      },
+      { rootMargin: '100px' }
+    );
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!isVisible || hasInteracted.current) return;
+
+    const startChecking = () => {
+      checkingFocus.current = setInterval(() => {
+        const activeElement = document.activeElement;
+        if (activeElement === iframeRef.current) {
+          if (!hasInteracted.current && onInteraction) {
+            hasInteracted.current = true;
+            onInteraction();
+            clearInterval(checkingFocus.current);
+          }
+        }
+      }, 100);
+    };
+
+    startChecking();
+
+    return () => {
+      if (checkingFocus.current) {
+        clearInterval(checkingFocus.current);
+      }
+    };
+  }, [isVisible, onInteraction, played]);
+
+  return (
+    <div ref={containerRef} className="mb-2">
+      {isVisible ? (
+        <iframe
+          ref={iframeRef}
+          src={`https://open.spotify.com/embed/track/${spotifyId}?utm_source=generator&theme=0`}
+          width="100%"
+          height="152"
+          frameBorder="0"
+          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+          loading="lazy"
+          className="rounded"
+        ></iframe>
+      ) : (
+        <div className="w-full h-[152px] bg-zinc-800 rounded flex items-center justify-center">
+          <svg className="w-8 h-8 text-gray-600 animate-pulse" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+          </svg>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Home() {
   // React hooks for state management
@@ -25,8 +127,8 @@ export default function Home() {
   // In Rails, you'd handle this with form submissions and page reloads
   // Stack source: currently only 'nts', but will support 'soundcloud', 'bandcamp', etc.
   const [stackSource, setStackSource] = useState('nts');
-  // Search mode: 'track', 'genre', 'liked', or 'likedTracks'
-  const [searchMode, setSearchMode] = useState('track');
+  // Search mode: 'home', 'track', 'genre', 'liked', or 'likedTracks'
+  const [searchMode, setSearchMode] = useState('home');
   const [likedEpisodes, setLikedEpisodes] = useState([]);
   const [likedTracks, setLikedTracksState] = useState([]);
   const [likedStates, setLikedStates] = useState({});
@@ -50,16 +152,38 @@ export default function Home() {
   const [tracklist, setTracklist] = useState(null);
   const [loadingTracklist, setLoadingTracklist] = useState(false);
 
+  // Home/Taste Profile state
+  const [homeTracks, setHomeTracks] = useState([{ artist: '', title: '' }]);
+  const [selectedGenres, setSelectedGenres] = useState([]);
+  const [currentStack, setCurrentStack] = useState(null);
+  const [stackHistory, setStackHistory] = useState([]);
+  const [viewingHistoryStack, setViewingHistoryStack] = useState(null);
+  const [stats, setStats] = useState({ seenEpisodes: 0, referencedTracks: 0, stacksCreated: 0 });
+  const [playedStates, setPlayedStates] = useState(new Set());
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [stackToDelete, setStackToDelete] = useState(null);
+  const [collapsedEpisodes, setCollapsedEpisodes] = useState(new Set());
+  const [hidePlayed, setHidePlayed] = useState(false);
+  const [hidePlayedSnapshot, setHidePlayedSnapshot] = useState(new Set());
+
   // Pagination settings
   const episodesPerPage = 9;
   const currentEpisodes = episodes ? episodes.slice(currentPage * episodesPerPage, (currentPage + 1) * episodesPerPage) : [];
   const totalPages = episodes ? Math.ceil(episodes.length / episodesPerPage) : 0;
 
-  // Load liked episodes and tracks on mount
+  // Load liked episodes, tracks, and stack history on mount
   useEffect(() => {
     setLikedEpisodes(getLikedEpisodes());
     setLikedTracksState(getLikedTracks());
+    setStackHistory(getStackHistory());
+    setStats(getTasteProfileStats());
   }, []);
+
+  // Reset hide played when switching stacks
+  useEffect(() => {
+    setHidePlayed(false);
+    setHidePlayedSnapshot(new Set());
+  }, [currentStack?.id, viewingHistoryStack?.id]);
 
   // Toggle like status
   const toggleLike = (episode) => {
@@ -296,6 +420,22 @@ export default function Home() {
         <div className="mb-8 flex gap-2">
           <button
             onClick={() => {
+              setSearchMode('home');
+              setEpisodes(null);
+              setSelectedGenre(null);
+              setSelectedEpisode(null);
+              setTracklist(null);
+            }}
+            className={`px-6 py-3 rounded-lg font-semibold transition-all ${
+              searchMode === 'home'
+                ? 'bg-white text-black'
+                : 'bg-zinc-900 text-white border border-zinc-800 hover:border-zinc-600'
+            }`}
+          >
+            Home
+          </button>
+          <button
+            onClick={() => {
               setSearchMode('track');
               setEpisodes(null);
               setSelectedGenre(null);
@@ -356,6 +496,117 @@ export default function Home() {
             Liked Tracks {likedTracks.length > 0 && `(${likedTracks.length})`}
           </button>
         </div>
+
+        {/* Home Tab */}
+        {searchMode === 'home' && (
+          <div className="mb-12">
+            <p className="text-gray-400 mb-6">
+              Build custom music stacks from your favorite artists and genres. The system will find the latest episodes and combine tracks for you.
+            </p>
+            <HomeTab
+              homeTracks={homeTracks}
+              setHomeTracks={setHomeTracks}
+              selectedGenres={selectedGenres}
+              setSelectedGenres={setSelectedGenres}
+              currentStack={currentStack}
+              setCurrentStack={setCurrentStack}
+              stackHistory={stackHistory}
+              setStackHistory={setStackHistory}
+              viewingHistoryStack={viewingHistoryStack}
+              setViewingHistoryStack={setViewingHistoryStack}
+              stats={stats}
+              setStats={setStats}
+              loading={loading}
+              setLoading={setLoading}
+              error={error}
+              setError={setError}
+              playedStates={playedStates}
+              setPlayedStates={setPlayedStates}
+              likedStates={likedStates}
+              setLikedStates={setLikedStates}
+              deleteModalOpen={deleteModalOpen}
+              setDeleteModalOpen={setDeleteModalOpen}
+              stackToDelete={stackToDelete}
+              setStackToDelete={setStackToDelete}
+              LazySpotifyEmbed={LazySpotifyEmbed}
+              handleTrackPlay={(stackId, trackIndex) => {
+                markTrackPlayed(stackId, trackIndex);
+                setPlayedStates(prev => new Set([...prev, `${stackId}:${trackIndex}`]));
+              }}
+              isPlayed={(stackId, trackIndex) => {
+                const key = `${stackId}:${trackIndex}`;
+                return playedStates.has(key) || isTrackPlayed(stackId, trackIndex);
+              }}
+              handleEpisodeLinkClick={(episodePath) => {
+                markEpisodeAsSeen(episodePath);
+                setStats(getTasteProfileStats());
+              }}
+              handleDeleteStack={(stack, e) => {
+                e.stopPropagation();
+                setStackToDelete(stack);
+                setDeleteModalOpen(true);
+              }}
+              confirmDelete={() => {
+                if (stackToDelete) {
+                  deleteStack(stackToDelete.id);
+                  setStackHistory(getStackHistory());
+                  setStats(getTasteProfileStats());
+                  if (viewingHistoryStack?.id === stackToDelete.id) {
+                    setViewingHistoryStack(null);
+                  }
+                }
+                setDeleteModalOpen(false);
+                setStackToDelete(null);
+              }}
+              cancelDelete={() => {
+                setDeleteModalOpen(false);
+                setStackToDelete(null);
+              }}
+              handleCreateStack={async () => {
+                const validTracks = homeTracks.filter(t => t.artist.trim() || t.title.trim());
+                if (validTracks.length === 0 && selectedGenres.length === 0) {
+                  setError('Please add at least one track or genre');
+                  return;
+                }
+                setLoading(true);
+                setError(null);
+                setCurrentStack(null);
+                setViewingHistoryStack(null);
+                try {
+                  const seenEpisodes = getSeenEpisodes();
+                  const referencedTracks = getReferencedTracks();
+                  const response = await fetch('/api/taste-profile/create-stack', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      tracks: validTracks,
+                      genres: selectedGenres.map(g => ({ id: g.id, name: g.name })),
+                      seenEpisodes,
+                      referencedTracks
+                    })
+                  });
+                  if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to create stack');
+                  }
+                  const data = await response.json();
+                  const stack = data.stack;
+                  saveStackToHistory(stack);
+                  const trackUids = stack.tracks.map(t => t.uid);
+                  markTracksAsReferenced(trackUids);
+                  setCurrentStack(stack);
+                  setStackHistory(getStackHistory());
+                  setStats(getTasteProfileStats());
+                } catch (err) {
+                  console.error('Error creating stack:', err);
+                  setError(err.message);
+                } finally {
+                  setLoading(false);
+                }
+              }}
+            />
+          </div>
+        )}
 
         {/* Track Search Form */}
         {searchMode === 'track' && (
@@ -561,9 +812,17 @@ export default function Home() {
                         href={`https://www.nts.live${episode.episodePath}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-semibold text-sm mb-3 line-clamp-2 block hover:underline text-white"
+                        className="font-semibold text-sm mb-3 line-clamp-2 block text-white hover:text-blue-400 transition-colors flex items-start gap-2 group"
                       >
-                        {episode.episodeTitle}
+                        <span className="flex-1">{episode.episodeTitle}</span>
+                        <svg
+                          className="w-4 h-4 flex-shrink-0 opacity-50 group-hover:opacity-100 transition-opacity"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
                       </a>
                       <div className="flex items-start justify-between gap-2">
                         {episode.track && (
@@ -645,37 +904,106 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="divide-y divide-zinc-800">
-                  {likedTracks.map((track, index) => (
-                    <div
-                      key={index}
-                      className="p-4 flex items-center gap-4 hover:bg-zinc-800/50 transition-colors"
-                    >
-                      <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
-                        {index + 1}
+                  {likedTracks.map((track, index) => {
+                    const spotifyId = track.spotify?.id;
+                    const played = spotifyId && (playedStates.has(`likedTracks:${index}`) || isTrackPlayed('likedTracks', index));
+                    return (
+                      <div
+                        key={index}
+                        className="p-4 hover:bg-zinc-800/50 transition-colors"
+                      >
+                        <div className="flex items-start gap-4">
+                          <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
+                            {index + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-semibold">{track.title}</h3>
+                                <p className="text-gray-400 text-sm">{track.artist}</p>
+                              </div>
+                              <div className="flex items-center gap-2 flex-shrink-0">
+                                {/* Play status indicator */}
+                                <div
+                                  className={`p-1.5 rounded-full ${
+                                    played ? 'text-green-500' : 'text-gray-500'
+                                  }`}
+                                  title={played ? 'Played' : 'Not played'}
+                                >
+                                  <svg
+                                    className="w-5 h-5"
+                                    fill={played ? 'currentColor' : 'none'}
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                    />
+                                  </svg>
+                                </div>
+                                {track.spotify && (
+                                  <a
+                                    href={track.spotify.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                    title="Open in Spotify"
+                                  >
+                                    <svg
+                                      className="w-5 h-5 text-green-500"
+                                      fill="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                                    </svg>
+                                  </a>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    if (!spotifyId) return;
+                                    unlikeTrack(spotifyId);
+                                    setLikedTracksState(getLikedTracks());
+                                    setLikedStates(prev => ({ ...prev, [spotifyId]: false }));
+                                  }}
+                                  className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                  title="Unlike"
+                                >
+                                  <svg
+                                    className="w-5 h-5 fill-red-500 text-red-500"
+                                    fill="currentColor"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeWidth={2}
+                                      d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                                    />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Spotify Embed */}
+                            {track.spotify && (
+                              <LazySpotifyEmbed
+                                spotifyId={track.spotify.id}
+                                onInteraction={() => {
+                                  markTrackPlayed('likedTracks', index);
+                                  setPlayedStates(prev => new Set([...prev, `likedTracks:${index}`]));
+                                }}
+                                played={played}
+                              />
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold truncate">{track.title}</h3>
-                        <p className="text-gray-400 text-sm truncate">{track.artist}</p>
-                      </div>
-                      {track.spotify && (
-                        <a
-                          href={track.spotify.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-shrink-0 p-2 hover:bg-white/10 rounded-full transition-colors"
-                          title="Open in Spotify"
-                        >
-                          <svg
-                            className="w-5 h-5 text-green-500"
-                            fill="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
-                          </svg>
-                        </a>
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -727,11 +1055,21 @@ export default function Home() {
                     href={`https://www.nts.live${episode.episodePath}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={`font-semibold text-sm mb-2 line-clamp-2 block hover:underline ${
-                      selectedEpisode === episode ? 'text-black' : 'text-white'
+                    className={`font-semibold text-sm mb-2 line-clamp-2 flex items-start gap-2 group transition-colors ${
+                      selectedEpisode === episode
+                        ? 'text-black hover:text-blue-600'
+                        : 'text-white hover:text-blue-400'
                     }`}
                   >
-                    {episode.episodeTitle}
+                    <span className="flex-1">{episode.episodeTitle}</span>
+                    <svg
+                      className="w-4 h-4 flex-shrink-0 opacity-50 group-hover:opacity-100 transition-opacity"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
                   </a>
 
                   {/* Genres as clickable pills */}
@@ -890,6 +1228,397 @@ export default function Home() {
         {/* Tracklist Display */}
         {tracklist && !loadingTracklist && selectedEpisode && (
           <TracklistDisplay tracklist={tracklist} episodePath={selectedEpisode.episodePath} />
+        )}
+
+        {/* Home Tab - Stack Results Display */}
+        {searchMode === 'home' && (currentStack || viewingHistoryStack) && (() => {
+          const displayStack = viewingHistoryStack || currentStack;
+
+          // Group tracks by episode
+          const episodeGroups = {};
+          displayStack.tracks.forEach((track, index) => {
+            const episodeKey = track.episodePath;
+            if (!episodeGroups[episodeKey]) {
+              episodeGroups[episodeKey] = {
+                episodePath: track.episodePath,
+                episodeTitle: track.episodeTitle,
+                airDate: track.airDate,
+                tracks: []
+              };
+            }
+            episodeGroups[episodeKey].tracks.push({ ...track, originalIndex: index });
+          });
+
+          const episodes = Object.values(episodeGroups);
+
+          return (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden mt-8">
+              <div className="p-6 border-b border-zinc-800">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h2 className="text-2xl font-bold">Stack Results</h2>
+                    {viewingHistoryStack && (
+                      <p className="text-sm text-gray-400 mt-1">
+                        From {new Date(viewingHistoryStack.createdAt).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                  {viewingHistoryStack && (
+                    <button
+                      onClick={() => setViewingHistoryStack(null)}
+                      className="text-sm text-gray-400 hover:text-white"
+                    >
+                      ✕ Close
+                    </button>
+                  )}
+                </div>
+                <p className="text-gray-400 text-sm mb-4">{displayStack.summary}</p>
+
+                {/* Hide Played Toggle */}
+                <div className="mb-4">
+                  <button
+                    onClick={() => {
+                      if (!hidePlayed) {
+                        // Turning ON: Take a snapshot of currently played tracks
+                        const snapshot = new Set();
+                        displayStack.tracks.forEach((track, index) => {
+                          const key = `${displayStack.id}:${index}`;
+                          if (playedStates.has(key) || isTrackPlayed(displayStack.id, index)) {
+                            snapshot.add(key);
+                          }
+                        });
+                        setHidePlayedSnapshot(snapshot);
+                        setHidePlayed(true);
+                      } else {
+                        // Turning OFF: Clear snapshot
+                        setHidePlayed(false);
+                        setHidePlayedSnapshot(new Set());
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      hidePlayed
+                        ? 'bg-green-900/30 border border-green-700/50 text-green-400'
+                        : 'bg-zinc-800 border border-zinc-700 text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {hidePlayed ? '✓ Hiding Played Tracks' : 'Hide Played Tracks'}
+                  </button>
+                </div>
+
+                {/* Sources Display */}
+                <div className="space-y-3">
+                  {displayStack.sources.tracks.length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 mb-2">ARTISTS / TRACKS:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {displayStack.sources.tracks.map((track, idx) => (
+                          <div
+                            key={idx}
+                            className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-full text-sm"
+                          >
+                            {track.artist && track.title
+                              ? `${track.artist} - ${track.title}`
+                              : track.artist || track.title}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {displayStack.sources.genres.length > 0 && (
+                    <div>
+                      <div className="text-xs font-semibold text-gray-500 mb-2">GENRES:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {displayStack.sources.genres.map((genre, idx) => (
+                          <div
+                            key={idx}
+                            className="px-3 py-1.5 bg-purple-900 border border-purple-700 rounded-full text-sm"
+                          >
+                            {typeof genre === 'string' ? genre : getGenreNameFromId(genre)}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Episode Groups */}
+              <div className="divide-y divide-zinc-800">
+                {episodes.map((episode) => {
+                  const isCollapsed = collapsedEpisodes.has(episode.episodePath);
+                  // Filter tracks based on hidePlayed setting (using snapshot)
+                  const episodeTracks = hidePlayed
+                    ? episode.tracks.filter(track => {
+                        const index = track.originalIndex;
+                        const key = `${displayStack.id}:${index}`;
+                        return !hidePlayedSnapshot.has(key);
+                      })
+                    : episode.tracks;
+
+                  // Skip episode if all tracks are filtered out
+                  if (episodeTracks.length === 0) return null;
+
+                  const playedCount = episode.tracks.filter(track => {
+                    const index = track.originalIndex;
+                    return playedStates.has(`${displayStack.id}:${index}`) || isTrackPlayed(displayStack.id, index);
+                  }).length;
+
+                  return (
+                    <div key={episode.episodePath} className="bg-zinc-900">
+                      {/* Episode Header */}
+                      <button
+                        onClick={() => {
+                          setCollapsedEpisodes(prev => {
+                            const next = new Set(prev);
+                            if (next.has(episode.episodePath)) {
+                              next.delete(episode.episodePath);
+                            } else {
+                              next.add(episode.episodePath);
+                            }
+                            return next;
+                          });
+                        }}
+                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-zinc-800/50 transition-colors border-b border-zinc-800"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <svg
+                            className={`w-5 h-5 text-gray-400 flex-shrink-0 transition-transform ${
+                              isCollapsed ? '' : 'rotate-90'
+                            }`}
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                          <div className="flex-1 min-w-0 text-left">
+                            <p className="text-xs text-gray-500 mb-1">Aired: {episode.airDate}</p>
+                            <a
+                              href={`https://www.nts.live${episode.episodePath}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markEpisodeAsSeen(episode.episodePath);
+                                setStats(getTasteProfileStats());
+                              }}
+                              className="font-semibold hover:text-blue-400 transition-colors flex items-start gap-2 mb-1 group"
+                            >
+                              <span className="flex-1">{episode.episodeTitle}</span>
+                              <svg
+                                className="w-4 h-4 flex-shrink-0 opacity-50 group-hover:opacity-100 transition-opacity"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                            </a>
+                            {/* Show a featured track from this episode */}
+                            {episode.tracks.length > 0 && episode.tracks[0].source && (
+                              <p className="text-xs text-gray-500">
+                                {episode.tracks[0].source.type === 'track' ? (
+                                  <>Track: {episode.tracks[0].source.artist && episode.tracks[0].source.title ? `${episode.tracks[0].source.artist} - ${episode.tracks[0].source.title}` : episode.tracks[0].source.artist || episode.tracks[0].source.title}</>
+                                ) : (
+                                  <>Genre: {getGenreNameFromId(episode.tracks[0].source.genreId)}</>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <span className="text-sm text-gray-400">
+                            {episodeTracks.length} {episodeTracks.length === 1 ? 'track' : 'tracks'}
+                          </span>
+                          {playedCount > 0 && (
+                            <span className="px-2 py-0.5 bg-green-900/30 border border-green-700/50 rounded text-xs text-green-400 font-medium">
+                              {playedCount} played
+                            </span>
+                          )}
+                        </div>
+                      </button>
+
+                      {/* Episode Tracks */}
+                      {!isCollapsed && (
+                        <div className="divide-y divide-zinc-800">
+                          {episodeTracks.map((track) => {
+                            const index = track.originalIndex;
+                            const spotifyId = track.spotify?.id;
+                            const liked = spotifyId && likedStates[spotifyId] !== undefined ? likedStates[spotifyId] : isTrackLiked(spotifyId);
+                            const played = playedStates.has(`${displayStack.id}:${index}`) || isTrackPlayed(displayStack.id, index);
+
+                            return (
+                              <div
+                                key={index}
+                                className={`p-4 transition-colors ${
+                                  played ? 'bg-green-900/5' : 'hover:bg-zinc-800/50'
+                                }`}
+                              >
+                                <div className="flex items-start gap-4">
+                                  <div className="text-gray-500 text-sm font-mono w-8 flex-shrink-0 text-right">
+                                    {index + 1}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-start justify-between gap-4 mb-2">
+                                      <div className="flex-1 min-w-0">
+                                        <h3 className="font-semibold">{track.title}</h3>
+                                        <p className="text-gray-400 text-sm">{track.artist}</p>
+                                      </div>
+                                      <div className="flex items-center gap-2 flex-shrink-0">
+                                        {played && (
+                                          <span className="px-2 py-1 bg-green-900/30 border border-green-700/50 rounded text-xs text-green-400 font-medium">
+                                            PLAYED
+                                          </span>
+                                        )}
+                                        {track.spotify && (
+                                          <a
+                                            href={track.spotify.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                            title="Open in Spotify"
+                                          >
+                                            <svg
+                                              className="w-5 h-5 text-green-500"
+                                              fill="currentColor"
+                                              viewBox="0 0 24 24"
+                                            >
+                                              <path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/>
+                                            </svg>
+                                          </a>
+                                        )}
+                                        <button
+                                          onClick={() => {
+                                            if (!spotifyId) return;
+                                            if (liked) {
+                                              unlikeTrack(spotifyId);
+                                              setLikedStates(prev => ({ ...prev, [spotifyId]: false }));
+                                            } else {
+                                              likeTrack({
+                                                artist: track.artist,
+                                                title: track.title,
+                                                spotify: track.spotify
+                                              });
+                                              setLikedStates(prev => ({ ...prev, [spotifyId]: true }));
+                                            }
+                                          }}
+                                          className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                                          title={liked ? 'Unlike' : 'Like'}
+                                        >
+                                          <svg
+                                            className={`w-5 h-5 ${liked ? 'fill-red-500 text-red-500' : 'text-gray-400'}`}
+                                            fill={liked ? 'currentColor' : 'none'}
+                                            stroke="currentColor"
+                                            viewBox="0 0 24 24"
+                                          >
+                                            <path
+                                              strokeLinecap="round"
+                                              strokeLinejoin="round"
+                                              strokeWidth={2}
+                                              d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"
+                                            />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {track.spotify && (
+                                      <LazySpotifyEmbed
+                                        spotifyId={track.spotify.id}
+                                        onInteraction={() => {
+                                          markTrackPlayed(displayStack.id, index);
+                                          setPlayedStates(prev => new Set([...prev, `${displayStack.id}:${index}`]));
+                                        }}
+                                        played={played}
+                                      />
+                                    )}
+
+                                    <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                                      {track.source && (
+                                        <>
+                                          {track.source.type === 'track' ? (
+                                            <span className="px-2 py-0.5 bg-blue-900/50 border border-blue-700/50 rounded text-blue-300 font-medium">
+                                              {track.source.artist && track.source.title
+                                                ? `${track.source.artist} - ${track.source.title}`
+                                                : track.source.artist || track.source.title}
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 bg-purple-900/50 border border-purple-700/50 rounded text-purple-300 font-medium">
+                                              {getGenreNameFromId(track.source.genreId)}
+                                            </span>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Delete Confirmation Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 max-w-md w-full shadow-2xl">
+              <h3 className="text-xl font-bold mb-2">Delete Stack?</h3>
+              {stackToDelete && (
+                <div className="mb-4">
+                  <p className="text-gray-400 text-sm mb-3">
+                    This will permanently delete this stack from your history.
+                  </p>
+                  <div className="p-3 bg-black border border-zinc-800 rounded text-sm">
+                    <div className="text-xs text-gray-500 mb-1">
+                      {new Date(stackToDelete.createdAt).toLocaleString()}
+                    </div>
+                    <div className="font-medium mb-1">
+                      {stackToDelete.tracks.length} tracks
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {stackToDelete.sources.tracks.length} artists, {stackToDelete.sources.genres.length} genres
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setDeleteModalOpen(false);
+                    setStackToDelete(null);
+                  }}
+                  className="flex-1 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (stackToDelete) {
+                      deleteStack(stackToDelete.id);
+                      setStackHistory(getStackHistory());
+                      setStats(getTasteProfileStats());
+                      if (viewingHistoryStack?.id === stackToDelete.id) {
+                        setViewingHistoryStack(null);
+                      }
+                    }
+                    setDeleteModalOpen(false);
+                    setStackToDelete(null);
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-medium transition-colors"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </main>

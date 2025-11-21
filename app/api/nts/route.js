@@ -29,29 +29,83 @@ export async function GET(request) {
     );
   }
 
+  // Prevent super broad searches - require at least 2 characters
+  // This protects the NTS API from being hammered with single-letter searches
+  const combinedQuery = [title, artist].filter(Boolean).join(' ').trim();
+  if (combinedQuery.length < 2) {
+    return NextResponse.json(
+      { error: 'Search query too short - please enter at least 2 characters' },
+      { status: 400 }
+    );
+  }
+
   try {
     // Build the search query by combining title + artist (if both provided)
     // We encode it for the URL (handles spaces and special chars)
     const queryParts = [title, artist].filter(Boolean);
     const query = encodeURIComponent(queryParts.join(' '));
 
-    // NTS API endpoint - publicly accessible, no auth needed!
-    const ntsUrl = `https://www.nts.live/api/v2/search?q=${query}&version=2&offset=0&limit=60&types[]=track`;
+    // Step 1: Fetch first page to get total count
+    // NTS API has a hard limit of 60 results per request, so we need to paginate
+    const firstPageUrl = `https://www.nts.live/api/v2/search?q=${query}&version=2&offset=0&limit=60&types[]=track`;
 
-    console.log('Fetching from NTS:', ntsUrl);
+    console.log('Fetching first page from NTS:', firstPageUrl);
 
-    // Fetch from NTS API
-    // Note: In Next.js API routes, we can use fetch() directly on the server
-    const response = await fetch(ntsUrl);
+    const firstResponse = await fetch(firstPageUrl);
 
-    if (!response.ok) {
-      throw new Error(`NTS API returned ${response.status}`);
+    if (!firstResponse.ok) {
+      throw new Error(`NTS API returned ${firstResponse.status}`);
     }
 
-    const data = await response.json();
+    const firstData = await firstResponse.json();
+    const totalCount = firstData.metadata.resultset.count;
 
-    // The NTS API returns an object with a 'results' array
-    const results = data.results;
+    console.log(`Total results available: ${totalCount}`);
+
+    // Step 2: Calculate how many pages we need to fetch
+    // NTS API limit is 60 per request
+    // We cap at 100 episodes to avoid hammering the API
+    const limit = 60;
+    const maxEpisodes = 100; // Cap at 100 episodes to be nice to NTS API
+    const maxPages = Math.ceil(maxEpisodes / limit); // This will be 2 pages (60 + 40 = 100)
+    const totalPages = Math.ceil(totalCount / limit);
+    const pagesToFetch = Math.min(totalPages, maxPages);
+    const isTruncated = totalPages > maxPages;
+
+    if (isTruncated) {
+      console.log(`Search too broad: ${totalCount} results found, limiting to ${maxEpisodes} results`);
+    }
+
+    // Step 3: Fetch all remaining pages in parallel (up to max)
+    const pagePromises = [];
+
+    for (let page = 1; page < pagesToFetch; page++) {
+      const offset = page * limit;
+      const pageUrl = `https://www.nts.live/api/v2/search?q=${query}&version=2&offset=${offset}&limit=${limit}&types[]=track`;
+      pagePromises.push(fetch(pageUrl).then(res => res.json()));
+    }
+
+    // Wait for all pages to complete
+    const additionalPages = await Promise.all(pagePromises);
+
+    // Step 4: Combine all results
+    let allResults = [...firstData.results];
+
+    for (const pageData of additionalPages) {
+      allResults = allResults.concat(pageData.results);
+    }
+
+    console.log(`Fetched ${allResults.length} total results across ${pagesToFetch} pages`);
+
+    // Step 5: Sort by date (newest first)
+    // The NTS API doesn't support server-side sorting, so we do it here
+    allResults.sort((a, b) => {
+      const dateA = new Date(a.local_date);
+      const dateB = new Date(b.local_date);
+      return dateB - dateA; // Descending order (newest first)
+    });
+
+    const results = allResults;
 
     // Check if we got any results
     if (!results || results.length === 0) {
@@ -84,7 +138,12 @@ export async function GET(request) {
 
     return NextResponse.json({
       episodes: episodes,
-      total: topEpisodes.length
+      total: topEpisodes.length,
+      truncated: isTruncated,
+      totalAvailable: totalCount,
+      message: isTruncated
+        ? `Search too broad - showing first ${allResults.length} of ${totalCount} results. Try a more specific search.`
+        : null
     });
 
   } catch (error) {

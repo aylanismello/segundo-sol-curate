@@ -65,9 +65,7 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
           return (
           <div
             key={track.uid || index}
-            className={`hover:bg-zinc-800/50 transition-colors ${
-              played ? 'opacity-50' : ''
-            }`}
+            className="hover:bg-zinc-800/50 transition-colors"
           >
             {/* Track Info Row */}
             <div className="p-4 flex items-center gap-4">
@@ -75,7 +73,7 @@ export default function TracklistDisplay({ tracklist, episodePath }) {
                 {index + 1}
               </div>
               <div className="flex-1 min-w-0">
-                <h3 className={`font-semibold truncate ${played ? 'text-gray-500' : ''}`}>
+                <h3 className="font-semibold truncate">
                   {track.title}
                 </h3>
                 <p className="text-gray-400 text-sm truncate">{track.artist}</p>
