@@ -18,7 +18,7 @@ import { useState, useEffect, useRef } from 'react';
 import TracklistDisplay from './components/TracklistDisplay';
 import HomeTab from './components/HomeTab';
 import { genreCategories, genreColors, getGenreApiId } from './data/genres';
-import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks, likeTrack, unlikeTrack, isTrackLiked, markTrackPlayed, isTrackPlayed, getViewed1001TLs } from './utils/localStorage';
+import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks, likeTrack, unlikeTrack, isTrackLiked, markTrackPlayed, isTrackPlayed } from './utils/localStorage';
 import {
   getSeenEpisodes,
   getReferencedTracks,
@@ -126,7 +126,6 @@ export default function Home() {
   // If you're used to React, this is familiar!
   // In Rails, you'd handle this with form submissions and page reloads
   // Stack source: currently only 'nts', but will support 'soundcloud', 'bandcamp', etc.
-  const [stackSource, setStackSource] = useState('nts');
   // Search mode: 'home', 'track', 'genre', 'liked', or 'likedTracks'
   const [searchMode, setSearchMode] = useState('home');
   const [likedEpisodes, setLikedEpisodes] = useState([]);
@@ -166,11 +165,6 @@ export default function Home() {
   const [hidePlayed, setHidePlayed] = useState(false);
   const [hidePlayedSnapshot, setHidePlayedSnapshot] = useState(new Set());
 
-  // 1001TL search results
-  const [tracklistResults, setTracklistResults] = useState(null);
-  const [selectedTracklist, setSelectedTracklist] = useState(null);
-  const [tracklistTracks, setTracklistTracks] = useState(null);
-  const [loadingTracks, setLoadingTracks] = useState(false);
 
   // Pagination settings
   const episodesPerPage = 9;
@@ -382,46 +376,6 @@ export default function Home() {
               Clear History
             </button>
           </div>
-
-          {/* Stack Source Selector */}
-          <div className="mt-6 p-4 bg-zinc-900 border border-zinc-800 rounded-lg">
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-semibold text-gray-400">Stack Source</label>
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setStackSource('nts')}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 transition-all ${
-                  stackSource === 'nts'
-                    ? 'bg-white text-black border-white'
-                    : 'bg-zinc-800 text-white border-zinc-700 hover:border-zinc-600'
-                }`}
-              >
-                <svg className="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 26" fill="currentColor">
-                  <path d="M22.7 6.9L22.3 9h-1.5l.5-2c.1-.6.1-1.1-.6-1.1s-1 .5-1.1 1.1l-.4 1.7c-.1.5-.1 1 0 1.5l1.4 4.1c.2.6.3 1.3.1 2l-.6 2.6c-.4 1.5-1.5 2.4-2.9 2.4-1.6 0-2.3-.7-1.9-2.4l.5-2.2h1.5l-.5 2.1c-.2.8 0 1.2.7 1.2.6 0 1-.5 1.2-1.2l.5-2.3c.1-.5.1-1.1-.1-1.6l-1.3-3.8c-.2-.7-.3-1.2-.2-2.1l.4-2c.4-1.6 1.4-2.4 2.9-2.4 1.7 0 2.2.8 1.8 2.3zM11.2 21.1L14.6 6H13l.3-1.3h4.8L17.8 6h-1.7l-3.4 15.1h-1.5zm-4.5 0L8.1 6.6 4.8 21.1H3.5L7.2 4.8h2.2L8 18.7l3.2-14h1.3L8.8 21.1H6.7zM0 26h26V0H0v26z"></path>
-                </svg>
-                <span className="font-semibold">NTS Radio</span>
-              </button>
-              <button
-                onClick={() => setStackSource('1001tl')}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 transition-all ${
-                  stackSource === '1001tl'
-                    ? 'bg-white text-black border-white'
-                    : 'bg-zinc-800 text-white border-zinc-700 hover:border-zinc-600'
-                }`}
-              >
-                <span className="font-semibold">1001 Tracklists</span>
-              </button>
-              <button
-                disabled
-                className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 bg-zinc-800 text-gray-600 border-zinc-700 cursor-not-allowed opacity-50"
-                title="Coming soon"
-              >
-                <span className="font-semibold">Bandcamp</span>
-                <span className="text-xs bg-zinc-700 px-2 py-1 rounded">Soon</span>
-              </button>
-            </div>
-          </div>
         </header>
 
         {/* Search Mode Toggle */}
@@ -509,58 +463,9 @@ export default function Home() {
         {searchMode === 'home' && (
           <div className="mb-12">
             <p className="text-gray-400 mb-6">
-              {stackSource === '1001tl'
-                ? 'Search for DJ sets and live performances by artist. Get the latest tracklists with Spotify previews.'
-                : 'Build custom music stacks from your favorite artists and genres. The system will find the latest episodes and combine tracks for you.'}
+              Build custom music stacks from your favorite artists and genres. The system will find the latest episodes and combine tracks for you.
             </p>
-            {stackSource === '1001tl' ? (
-              <div className="mb-8">
-                <div className="mb-4">
-                  <label className="block text-sm font-semibold mb-2">Artist Name</label>
-                  <input
-                    type="text"
-                    value={homeTracks[0]?.artist || ''}
-                    onChange={(e) => setHomeTracks([{ artist: e.target.value, title: '' }])}
-                    placeholder="e.g., Bonobo, Four Tet, Peggy Gou"
-                    className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
-                  />
-                  <p className="text-sm text-gray-500 mt-2">
-                    Search for DJ sets, live performances, and festival appearances
-                  </p>
-                </div>
-                <button
-                  onClick={async () => {
-                    const artist = homeTracks[0]?.artist?.trim();
-                    if (!artist) {
-                      setError('Please enter an artist name');
-                      return;
-                    }
-                    setLoading(true);
-                    setError(null);
-                    setTracklistResults(null);
-                    try {
-                      const response = await fetch(`/api/1001tracklists/search?artist=${encodeURIComponent(artist)}`);
-                      if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || 'Failed to search');
-                      }
-                      const data = await response.json();
-                      setTracklistResults(data);
-                    } catch (err) {
-                      console.error('Error searching 1001TL:', err);
-                      setError(err.message);
-                    } finally {
-                      setLoading(false);
-                    }
-                  }}
-                  disabled={loading}
-                  className="w-full py-3 px-6 bg-white text-black font-semibold rounded-lg hover:bg-gray-200 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loading ? 'Searching...' : 'Find DJ Sets'}
-                </button>
-              </div>
-            ) : (
-              <HomeTab
+            <HomeTab
               homeTracks={homeTracks}
               setHomeTracks={setHomeTracks}
               selectedGenres={selectedGenres}
@@ -662,120 +567,6 @@ export default function Home() {
                 }
               }}
             />
-            )}
-
-            {/* 1001TL Tracklist Results */}
-            {tracklistResults && (
-              <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-lg p-6">
-                <h3 className="text-xl font-bold mb-4">
-                  Found {tracklistResults.count} tracklist{tracklistResults.count !== 1 ? 's' : ''} for {tracklistResults.artist}
-                </h3>
-                <div className="space-y-2">
-                  {tracklistResults.tracklists.slice(0, 1).map((tracklist, index) => (
-                    <button
-                      key={index}
-                      onClick={async () => {
-                        setSelectedTracklist(tracklist);
-                        setLoadingTracks(true);
-                        setError(null);
-                        try {
-                          const response = await fetch(`/api/1001tracklists/tracklist?url=${encodeURIComponent(tracklist.url)}`);
-                          if (!response.ok) {
-                            const errorData = await response.json();
-                            throw new Error(errorData.error || 'Failed to fetch tracks');
-                          }
-                          const data = await response.json();
-                          setTracklistTracks(data);
-                        } catch (err) {
-                          console.error('Error fetching tracks:', err);
-                          setError(err.message);
-                        } finally {
-                          setLoadingTracks(false);
-                        }
-                      }}
-                      className={`w-full text-left p-4 rounded transition-colors border-2 ${
-                        selectedTracklist === tracklist
-                          ? 'bg-white text-black border-white'
-                          : 'bg-zinc-800 border-zinc-700 hover:border-zinc-600'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1">
-                          <p className={`font-semibold ${
-                            selectedTracklist === tracklist ? 'text-black' : 'text-white'
-                          }`}>
-                            {tracklist.title}
-                          </p>
-                        </div>
-                        <svg
-                          className={`w-5 h-5 flex-shrink-0 ${
-                            selectedTracklist === tracklist ? 'text-black' : 'text-gray-400'
-                          }`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
-                          />
-                        </svg>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Loading Tracks */}
-            {loadingTracks && (
-              <div className="mt-8 p-6 bg-zinc-900 border border-zinc-800 rounded-lg">
-                <p className="text-gray-400">Loading tracks...</p>
-              </div>
-            )}
-
-            {/* Tracklist Tracks Display */}
-            {tracklistTracks && !loadingTracks && (
-              <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-                <div className="p-6 border-b border-zinc-800">
-                  <h2 className="text-2xl font-bold mb-2">{tracklistTracks.title}</h2>
-                  <p className="text-gray-400 text-sm">
-                    {tracklistTracks.trackCount} track{tracklistTracks.trackCount !== 1 ? 's' : ''}
-                  </p>
-                  <a
-                    href={tracklistTracks.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-blue-400 hover:text-blue-300 transition-colors inline-flex items-center gap-2 mt-2"
-                  >
-                    View on 1001tracklists
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                </div>
-                <div className="divide-y divide-zinc-800">
-                  {tracklistTracks.tracks.map((track, index) => (
-                    <div
-                      key={index}
-                      className="p-4 hover:bg-zinc-800/50 transition-colors"
-                    >
-                      <div className="flex items-start gap-4">
-                        <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
-                          {track.trackNumber}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold">{track.title}</h3>
-                          <p className="text-gray-400 text-sm">{track.artist}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
