@@ -11,7 +11,8 @@ const STORAGE_KEYS = {
   VIEWED_TRACKLISTS: 'nts_viewed_tracklists',
   PLAYED_TRACKS: 'nts_played_tracks',
   LIKED_EPISODES: 'nts_liked_episodes',
-  LIKED_TRACKS: 'nts_liked_tracks'
+  LIKED_TRACKS: 'nts_liked_tracks',
+  VIEWED_1001TL: '1001tl_viewed_tracklists'
 };
 
 // Helper to safely parse JSON from localStorage
@@ -212,4 +213,28 @@ export function getLikedTracks() {
     console.error('Error getting liked tracks:', error);
     return [];
   }
+}
+
+/**
+ * Mark a 1001 Tracklists URL as viewed
+ */
+export function mark1001TLViewed(url) {
+  const viewed = new Set(getStorageItem(STORAGE_KEYS.VIEWED_1001TL));
+  viewed.add(url);
+  setStorageItem(STORAGE_KEYS.VIEWED_1001TL, viewed);
+}
+
+/**
+ * Check if a 1001 Tracklists URL has been viewed
+ */
+export function is1001TLViewed(url) {
+  const viewed = new Set(getStorageItem(STORAGE_KEYS.VIEWED_1001TL));
+  return viewed.has(url);
+}
+
+/**
+ * Get all viewed 1001 Tracklists URLs
+ */
+export function getViewed1001TLs() {
+  return Array.from(new Set(getStorageItem(STORAGE_KEYS.VIEWED_1001TL)));
 }

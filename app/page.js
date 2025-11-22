@@ -18,7 +18,7 @@ import { useState, useEffect, useRef } from 'react';
 import TracklistDisplay from './components/TracklistDisplay';
 import HomeTab from './components/HomeTab';
 import { genreCategories, genreColors, getGenreApiId } from './data/genres';
-import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks, likeTrack, unlikeTrack, isTrackLiked, markTrackPlayed, isTrackPlayed } from './utils/localStorage';
+import { markTracklistViewed, isTracklistViewed, clearAllTracking, getTrackingStats, likeEpisode, unlikeEpisode, isEpisodeLiked, getLikedEpisodes, getLikedTracks, likeTrack, unlikeTrack, isTrackLiked, markTrackPlayed, isTrackPlayed, getViewed1001TLs } from './utils/localStorage';
 import {
   getSeenEpisodes,
   getReferencedTracks,
@@ -165,6 +165,12 @@ export default function Home() {
   const [collapsedEpisodes, setCollapsedEpisodes] = useState(new Set());
   const [hidePlayed, setHidePlayed] = useState(false);
   const [hidePlayedSnapshot, setHidePlayedSnapshot] = useState(new Set());
+
+  // 1001TL search results
+  const [tracklistResults, setTracklistResults] = useState(null);
+  const [selectedTracklist, setSelectedTracklist] = useState(null);
+  const [tracklistTracks, setTracklistTracks] = useState(null);
+  const [loadingTracks, setLoadingTracks] = useState(false);
 
   // Pagination settings
   const episodesPerPage = 9;
@@ -397,12 +403,14 @@ export default function Home() {
                 <span className="font-semibold">NTS Radio</span>
               </button>
               <button
-                disabled
-                className="flex items-center gap-3 px-4 py-3 rounded-lg border-2 bg-zinc-800 text-gray-600 border-zinc-700 cursor-not-allowed opacity-50"
-                title="Coming soon"
+                onClick={() => setStackSource('1001tl')}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg border-2 transition-all ${
+                  stackSource === '1001tl'
+                    ? 'bg-white text-black border-white'
+                    : 'bg-zinc-800 text-white border-zinc-700 hover:border-zinc-600'
+                }`}
               >
-                <span className="font-semibold">SoundCloud</span>
-                <span className="text-xs bg-zinc-700 px-2 py-1 rounded">Soon</span>
+                <span className="font-semibold">1001 Tracklists</span>
               </button>
               <button
                 disabled
@@ -501,9 +509,58 @@ export default function Home() {
         {searchMode === 'home' && (
           <div className="mb-12">
             <p className="text-gray-400 mb-6">
-              Build custom music stacks from your favorite artists and genres. The system will find the latest episodes and combine tracks for you.
+              {stackSource === '1001tl'
+                ? 'Search for DJ sets and live performances by artist. Get the latest tracklists with Spotify previews.'
+                : 'Build custom music stacks from your favorite artists and genres. The system will find the latest episodes and combine tracks for you.'}
             </p>
-            <HomeTab
+            {stackSource === '1001tl' ? (
+              <div className="mb-8">
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold mb-2">Artist Name</label>
+                  <input
+                    type="text"
+                    value={homeTracks[0]?.artist || ''}
+                    onChange={(e) => setHomeTracks([{ artist: e.target.value, title: '' }])}
+                    placeholder="e.g., Bonobo, Four Tet, Peggy Gou"
+                    className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-white text-lg"
+                  />
+                  <p className="text-sm text-gray-500 mt-2">
+                    Search for DJ sets, live performances, and festival appearances
+                  </p>
+                </div>
+                <button
+                  onClick={async () => {
+                    const artist = homeTracks[0]?.artist?.trim();
+                    if (!artist) {
+                      setError('Please enter an artist name');
+                      return;
+                    }
+                    setLoading(true);
+                    setError(null);
+                    setTracklistResults(null);
+                    try {
+                      const response = await fetch(`/api/1001tracklists/search?artist=${encodeURIComponent(artist)}`);
+                      if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to search');
+                      }
+                      const data = await response.json();
+                      setTracklistResults(data);
+                    } catch (err) {
+                      console.error('Error searching 1001TL:', err);
+                      setError(err.message);
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading}
+                  className="w-full py-3 px-6 bg-white text-black font-semibold rounded-lg hover:bg-gray-200 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                >
+                  {loading ? 'Searching...' : 'Find DJ Sets'}
+                </button>
+              </div>
+            ) : (
+              <HomeTab
               homeTracks={homeTracks}
               setHomeTracks={setHomeTracks}
               selectedGenres={selectedGenres}
@@ -605,6 +662,120 @@ export default function Home() {
                 }
               }}
             />
+            )}
+
+            {/* 1001TL Tracklist Results */}
+            {tracklistResults && (
+              <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+                <h3 className="text-xl font-bold mb-4">
+                  Found {tracklistResults.count} tracklist{tracklistResults.count !== 1 ? 's' : ''} for {tracklistResults.artist}
+                </h3>
+                <div className="space-y-2">
+                  {tracklistResults.tracklists.slice(0, 1).map((tracklist, index) => (
+                    <button
+                      key={index}
+                      onClick={async () => {
+                        setSelectedTracklist(tracklist);
+                        setLoadingTracks(true);
+                        setError(null);
+                        try {
+                          const response = await fetch(`/api/1001tracklists/tracklist?url=${encodeURIComponent(tracklist.url)}`);
+                          if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.error || 'Failed to fetch tracks');
+                          }
+                          const data = await response.json();
+                          setTracklistTracks(data);
+                        } catch (err) {
+                          console.error('Error fetching tracks:', err);
+                          setError(err.message);
+                        } finally {
+                          setLoadingTracks(false);
+                        }
+                      }}
+                      className={`w-full text-left p-4 rounded transition-colors border-2 ${
+                        selectedTracklist === tracklist
+                          ? 'bg-white text-black border-white'
+                          : 'bg-zinc-800 border-zinc-700 hover:border-zinc-600'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <p className={`font-semibold ${
+                            selectedTracklist === tracklist ? 'text-black' : 'text-white'
+                          }`}>
+                            {tracklist.title}
+                          </p>
+                        </div>
+                        <svg
+                          className={`w-5 h-5 flex-shrink-0 ${
+                            selectedTracklist === tracklist ? 'text-black' : 'text-gray-400'
+                          }`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"
+                          />
+                        </svg>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Loading Tracks */}
+            {loadingTracks && (
+              <div className="mt-8 p-6 bg-zinc-900 border border-zinc-800 rounded-lg">
+                <p className="text-gray-400">Loading tracks...</p>
+              </div>
+            )}
+
+            {/* Tracklist Tracks Display */}
+            {tracklistTracks && !loadingTracks && (
+              <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+                <div className="p-6 border-b border-zinc-800">
+                  <h2 className="text-2xl font-bold mb-2">{tracklistTracks.title}</h2>
+                  <p className="text-gray-400 text-sm">
+                    {tracklistTracks.trackCount} track{tracklistTracks.trackCount !== 1 ? 's' : ''}
+                  </p>
+                  <a
+                    href={tracklistTracks.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-blue-400 hover:text-blue-300 transition-colors inline-flex items-center gap-2 mt-2"
+                  >
+                    View on 1001tracklists
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                </div>
+                <div className="divide-y divide-zinc-800">
+                  {tracklistTracks.tracks.map((track, index) => (
+                    <div
+                      key={index}
+                      className="p-4 hover:bg-zinc-800/50 transition-colors"
+                    >
+                      <div className="flex items-start gap-4">
+                        <div className="text-gray-500 text-sm font-mono w-8 text-right flex-shrink-0">
+                          {track.trackNumber}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold">{track.title}</h3>
+                          <p className="text-gray-400 text-sm">{track.artist}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1234,17 +1405,28 @@ export default function Home() {
         {searchMode === 'home' && (currentStack || viewingHistoryStack) && (() => {
           const displayStack = viewingHistoryStack || currentStack;
 
-          // Group tracks by episode
+          // Group tracks by episode or tracklist
           const episodeGroups = {};
           displayStack.tracks.forEach((track, index) => {
-            const episodeKey = track.episodePath;
+            const episodeKey = displayStack.source === '1001tl'
+              ? track.tracklistUrl
+              : track.episodePath;
+
             if (!episodeGroups[episodeKey]) {
-              episodeGroups[episodeKey] = {
-                episodePath: track.episodePath,
-                episodeTitle: track.episodeTitle,
-                airDate: track.airDate,
-                tracks: []
-              };
+              episodeGroups[episodeKey] = displayStack.source === '1001tl'
+                ? {
+                    episodePath: track.tracklistUrl,
+                    episodeTitle: track.tracklistTitle,
+                    airDate: track.tracklistDate,
+                    venue: track.tracklistVenue,
+                    tracks: []
+                  }
+                : {
+                    episodePath: track.episodePath,
+                    episodeTitle: track.episodeTitle,
+                    airDate: track.airDate,
+                    tracks: []
+                  };
             }
             episodeGroups[episodeKey].tracks.push({ ...track, originalIndex: index });
           });
@@ -1307,38 +1489,70 @@ export default function Home() {
 
                 {/* Sources Display */}
                 <div className="space-y-3">
-                  {displayStack.sources.tracks.length > 0 && (
+                  {displayStack.source === '1001tl' ? (
                     <div>
-                      <div className="text-xs font-semibold text-gray-500 mb-2">ARTISTS / TRACKS:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {displayStack.sources.tracks.map((track, idx) => (
-                          <div
-                            key={idx}
-                            className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-full text-sm"
-                          >
-                            {track.artist && track.title
-                              ? `${track.artist} - ${track.title}`
-                              : track.artist || track.title}
-                          </div>
-                        ))}
+                      <div className="text-xs font-semibold text-gray-500 mb-2">ARTIST:</div>
+                      <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-full text-sm inline-block">
+                        {displayStack.sources.artist}
                       </div>
+                      {displayStack.sources.tracklists && displayStack.sources.tracklists.length > 0 && (
+                        <div className="mt-3">
+                          <div className="text-xs font-semibold text-gray-500 mb-2">FROM TRACKLISTS:</div>
+                          <div className="space-y-2">
+                            {displayStack.sources.tracklists.map((tl, idx) => (
+                              <a
+                                key={idx}
+                                href={tl.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm hover:border-zinc-600 transition-colors"
+                              >
+                                <div className="font-medium">{tl.title}</div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {tl.date} • {tl.venue} • {tl.trackCount} tracks
+                                </div>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ) : (
+                    <>
+                      {displayStack.sources.tracks && displayStack.sources.tracks.length > 0 && (
+                        <div>
+                          <div className="text-xs font-semibold text-gray-500 mb-2">ARTISTS / TRACKS:</div>
+                          <div className="flex flex-wrap gap-2">
+                            {displayStack.sources.tracks.map((track, idx) => (
+                              <div
+                                key={idx}
+                                className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded-full text-sm"
+                              >
+                                {track.artist && track.title
+                                  ? `${track.artist} - ${track.title}`
+                                  : track.artist || track.title}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                  {displayStack.sources.genres.length > 0 && (
-                    <div>
-                      <div className="text-xs font-semibold text-gray-500 mb-2">GENRES:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {displayStack.sources.genres.map((genre, idx) => (
-                          <div
-                            key={idx}
-                            className="px-3 py-1.5 bg-purple-900 border border-purple-700 rounded-full text-sm"
-                          >
-                            {typeof genre === 'string' ? genre : getGenreNameFromId(genre)}
+                      {displayStack.sources.genres && displayStack.sources.genres.length > 0 && (
+                        <div>
+                          <div className="text-xs font-semibold text-gray-500 mb-2">GENRES:</div>
+                          <div className="flex flex-wrap gap-2">
+                            {displayStack.sources.genres.map((genre, idx) => (
+                              <div
+                                key={idx}
+                                className="px-3 py-1.5 bg-purple-900 border border-purple-700 rounded-full text-sm"
+                              >
+                                {typeof genre === 'string' ? genre : getGenreNameFromId(genre)}
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -1395,13 +1609,15 @@ export default function Home() {
                           <div className="flex-1 min-w-0 text-left">
                             <p className="text-xs text-gray-500 mb-1">Aired: {episode.airDate}</p>
                             <a
-                              href={`https://www.nts.live${episode.episodePath}`}
+                              href={displayStack.source === '1001tl' ? episode.episodePath : `https://www.nts.live${episode.episodePath}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                markEpisodeAsSeen(episode.episodePath);
-                                setStats(getTasteProfileStats());
+                                if (displayStack.source !== '1001tl') {
+                                  markEpisodeAsSeen(episode.episodePath);
+                                  setStats(getTasteProfileStats());
+                                }
                               }}
                               className="font-semibold hover:text-blue-400 transition-colors flex items-start gap-2 mb-1 group"
                             >
@@ -1415,8 +1631,13 @@ export default function Home() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                               </svg>
                             </a>
+                            {episode.venue && (
+                              <p className="text-xs text-gray-500">
+                                {episode.venue}
+                              </p>
+                            )}
                             {/* Show a featured track from this episode */}
-                            {episode.tracks.length > 0 && episode.tracks[0].source && (
+                            {episode.tracks.length > 0 && episode.tracks[0].source && displayStack.source !== '1001tl' && (
                               <p className="text-xs text-gray-500">
                                 {episode.tracks[0].source.type === 'track' ? (
                                   <>Track: {episode.tracks[0].source.artist && episode.tracks[0].source.title ? `${episode.tracks[0].source.artist} - ${episode.tracks[0].source.title}` : episode.tracks[0].source.artist || episode.tracks[0].source.title}</>
@@ -1537,7 +1758,11 @@ export default function Home() {
                                     <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
                                       {track.source && (
                                         <>
-                                          {track.source.type === 'track' ? (
+                                          {track.source.type === '1001tl' ? (
+                                            <span className="px-2 py-0.5 bg-orange-900/50 border border-orange-700/50 rounded text-orange-300 font-medium">
+                                              1001 Tracklists
+                                            </span>
+                                          ) : track.source.type === 'track' ? (
                                             <span className="px-2 py-0.5 bg-blue-900/50 border border-blue-700/50 rounded text-blue-300 font-medium">
                                               {track.source.artist && track.source.title
                                                 ? `${track.source.artist} - ${track.source.title}`
